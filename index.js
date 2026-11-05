@@ -240,6 +240,25 @@ app.post('/borrows', async (req, res) => {
             });
         }
 
+
+        
+
+
+        // Date validation
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+
+const selectedReturnDate = new Date(`${returnDate}T00:00:00`);
+
+if (
+    isNaN(selectedReturnDate.getTime()) ||
+    selectedReturnDate <= today
+) {
+    return res.status(400).send({
+        message: 'Return date must be a future date'
+    });
+}
+
         // Create borrow record
         const borrowRecord = {
             bookId: bookId,
