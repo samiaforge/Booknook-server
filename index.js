@@ -181,7 +181,7 @@ app.delete('/books/:id', async (req, res) => {
 
 
 
-
+// borrow books
 app.post('/borrows', async (req, res) => {
     try {
         const { bookId, userName, userEmail, returnDate } = req.body;
@@ -268,6 +268,8 @@ app.post('/borrows', async (req, res) => {
 });
 
 
+
+
 app.get('/borrows', async (req, res) => {
     try {
         const borrows = await borrowsCollection.find().toArray();
@@ -282,6 +284,55 @@ app.get('/borrows', async (req, res) => {
         });
     }
 });
+
+
+
+
+// DELETE /borrows/:id - Return Book
+app.delete('/borrows/:id', async (req, res) => {
+    try {
+        const id = req.params.id;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({
+                message: 'Invalid Borrow ID'
+            });
+        }
+
+        const borrow = await borrowsCollection.findOne({
+            _id: new ObjectId(id)
+        });
+
+        if (!borrow) {
+            return res.status(404).send({
+                message: 'Borrow Record Not Found'
+            });
+        }
+
+        await borrowsCollection.deleteOne({
+            _id: new ObjectId(id)
+        });
+
+        await booksCollection.updateOne(
+            { _id: new ObjectId(borrow.bookId) },
+            { $inc: { availableCopies: 1 } }
+        );
+
+        res.send({
+            message: 'Book Returned Successfully'
+        });
+
+    } catch (error) {
+        console.error('Return Book Error:', error);
+        res.status(500).send({
+            message: 'Failed to return book'
+        });
+    }
+});
+
+
+
+
 
 
 
