@@ -108,7 +108,7 @@ const startServer = async () => {
 
 
   // GET Single Book
-  app.get('/books/:id', async (req, res) => {
+app.get('/books/:id', verifyToken, async (req, res) => {
     try {
       const id = req.params.id;
 
@@ -142,35 +142,53 @@ const startServer = async () => {
 
 
   // POST Add Book
-  app.post('/books', async (req, res) => {
-    try {
-      const book = req.body;
+// POST Add Book (Protected)
+app.post('/books', verifyToken, async (req, res) => {
+  try {
+    const book = req.body;
 
-      const newBook = {
-        title: book.title,
-        author: book.author,
-        category: book.category,
-        image: book.image,
-        description: book.description,
-        addedBy: {
-          name: book.addedBy.name,
-          email: book.addedBy.email
-        },
-        totalCopies: parseInt(book.totalCopies),
-        availableCopies: parseInt(book.totalCopies),
-        createdAt: new Date()
-      };
+    // Get user information from verified JWT
+    const userName = req.user.name;
+    const userEmail = req.user.email;
 
-      const result = await booksCollection.insertOne(newBook);
-
-      res.send(result);
-
-    } catch (error) {
-      res.status(500).send({
-        message: 'Failed to add book'
+    if (!userName || !userEmail) {
+      return res.status(401).send({
+        message: 'User information not found'
       });
     }
-  });
+
+    const newBook = {
+      title: book.title,
+      author: book.author,
+      category: book.category,
+      image: book.image,
+      description: book.description,
+
+      addedBy: {
+        name: userName,
+        email: userEmail.toLowerCase()
+      },
+
+      totalCopies: parseInt(book.totalCopies),
+      availableCopies: parseInt(book.totalCopies),
+      createdAt: new Date()
+    };
+
+    const result = await booksCollection.insertOne(newBook);
+
+    res.status(201).send({
+      message: 'Book Added Successfully',
+      insertedId: result.insertedId
+    });
+
+  } catch (error) {
+    console.error('Add Book Error:', error);
+
+    res.status(500).send({
+      message: 'Failed to add book'
+    });
+  }
+});
 
 
 
