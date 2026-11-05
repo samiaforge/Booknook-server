@@ -618,9 +618,11 @@ const startServer = async () => {
 
     console.log("MongoDB Connected Successfully!");
 
-    app.listen(PORT, () => {
-      console.log(`BookNook Server running on port ${PORT}`);
-    });
+    if (process.env.NODE_ENV !== "production") {
+      app.listen(PORT, () => {
+        console.log(`BookNook Server running on port ${PORT}`);
+      });
+    }
   } catch (error) {
     console.error("Server Connection Error:", error);
     process.exit(1);
@@ -628,3 +630,7 @@ const startServer = async () => {
 };
 
 startServer();
+
+export default app;
+
+
