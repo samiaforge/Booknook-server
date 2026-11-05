@@ -5,30 +5,71 @@ import cors from "cors";
 import "dotenv/config";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
-
-
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const client = new MongoClient(process.env.DB_URI);
+// -------------------- MIDDLEWARE --------------------
 
 app.use(cors());
 app.use(express.json());
-
 
 app.get("/", (req, res) => {
   res.send("BookNook Server is Running!");
 });
 
+// -------------------- MONGODB CONNECTION --------------------
 
+// Reuse MongoDB connection in Vercel serverless functions
+const globalForMongo = globalThis;
 
-// MongoDB collections
+const client =
+  globalForMongo.mongoClient ||
+  new MongoClient(process.env.DB_URI);
+
+globalForMongo.mongoClient = client;
+
 let booksCollection;
 let borrowsCollection;
 
+const connectDB = async () => {
+  if (!globalForMongo.mongoPromise) {
+    globalForMongo.mongoPromise = client
+      .connect()
+      .then(() => {
+        const db = client.db(process.env.DB_NAME);
 
-// Better Auth JWT public key
+        console.log("MongoDB Connected Successfully!");
+
+        return db;
+      })
+      .catch((error) => {
+        globalForMongo.mongoPromise = null;
+        throw error;
+      });
+  }
+
+  const db = await globalForMongo.mongoPromise;
+
+  booksCollection = db.collection("books");
+  borrowsCollection = db.collection("borrows");
+};
+
+// Connect to database before processing API requests
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error("MongoDB Connection Error:", error.message);
+
+    res.status(503).send({
+      message: "Database connection failed.",
+    });
+  }
+});
+
+// -------------------- BETTER AUTH JWT --------------------
+
 const JWKS = createRemoteJWKSet(
   new URL(`${process.env.BETTER_AUTH_URL}/api/auth/jwks`)
 );
@@ -73,26 +114,19 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// Helper: validate MongoDB ObjectId
+// Helper functions
 const isValidId = (id) => ObjectId.isValid(id);
 
-// Helper: get authenticated user's email
 const getUserEmail = (req) => req.user.email.toLowerCase();
 
-
-
-
-
-// 1. GET ALL BOOKS
+// -------------------- 1. GET ALL BOOKS --------------------
 // GET /books
 // Public API
-
 
 app.get("/books", async (req, res) => {
   try {
     const query = {};
 
-    // Optional search by category
     if (req.query.category && req.query.category !== "All") {
       query.category = req.query.category;
     }
@@ -119,13 +153,9 @@ app.get("/books", async (req, res) => {
   }
 });
 
-
-
-
-// 2. GET SINGLE BOOK
+// -------------------- 2. GET SINGLE BOOK --------------------
 // GET /books/:id
 // Protected API
-
 
 app.get("/books/:id", verifyToken, async (req, res) => {
   try {
@@ -157,13 +187,9 @@ app.get("/books/:id", verifyToken, async (req, res) => {
   }
 });
 
-
-
-
-// 3. ADD NEW BOOK
+// -------------------- 3. ADD NEW BOOK --------------------
 // POST /books
 // Protected API
-
 
 app.post("/books", verifyToken, async (req, res) => {
   try {
@@ -200,7 +226,6 @@ app.post("/books", verifyToken, async (req, res) => {
       totalCopies: Number(totalCopies),
       availableCopies: Number(totalCopies),
 
-      // Identity comes from verified JWT
       addedBy: {
         name: req.user.name,
         email: req.user.email,
@@ -224,12 +249,9 @@ app.post("/books", verifyToken, async (req, res) => {
   }
 });
 
-
-
-// 4. UPDATE BOOK
+// -------------------- 4. UPDATE BOOK --------------------
 // PATCH /books/:id
 // Protected API + Ownership check
-
 
 app.patch("/books/:id", verifyToken, async (req, res) => {
   try {
@@ -251,7 +273,6 @@ app.patch("/books/:id", verifyToken, async (req, res) => {
       });
     }
 
-    // Only the book owner can update it
     if (
       book.addedBy?.email?.toLowerCase() !== getUserEmail(req)
     ) {
@@ -275,6 +296,7 @@ app.patch("/books/:id", verifyToken, async (req, res) => {
     if (author !== undefined) updateFields.author = author;
     if (category !== undefined) updateFields.category = category;
     if (image !== undefined) updateFields.image = image;
+
     if (description !== undefined) {
       updateFields.description = description;
     }
@@ -327,13 +349,9 @@ app.patch("/books/:id", verifyToken, async (req, res) => {
   }
 });
 
-
-
-
-// 5. DELETE BOOK
+// -------------------- 5. DELETE BOOK --------------------
 // DELETE /books/:id
 // Protected API + Ownership check
-
 
 app.delete("/books/:id", verifyToken, async (req, res) => {
   try {
@@ -355,7 +373,6 @@ app.delete("/books/:id", verifyToken, async (req, res) => {
       });
     }
 
-    // Only the book owner can delete it
     if (
       book.addedBy?.email?.toLowerCase() !== getUserEmail(req)
     ) {
@@ -364,7 +381,6 @@ app.delete("/books/:id", verifyToken, async (req, res) => {
       });
     }
 
-    // Do not delete a book while it is borrowed
     if (book.availableCopies < book.totalCopies) {
       return res.status(400).send({
         message: "This book cannot be deleted while copies are borrowed.",
@@ -387,13 +403,9 @@ app.delete("/books/:id", verifyToken, async (req, res) => {
   }
 });
 
-
-
-
-// 6. BORROW BOOK
+// -------------------- 6. BORROW BOOK --------------------
 // POST /borrows
 // Protected API
-
 
 app.post("/borrows", verifyToken, async (req, res) => {
   try {
@@ -405,7 +417,6 @@ app.post("/borrows", verifyToken, async (req, res) => {
       });
     }
 
-    // Validate return date before changing book copies
     const selectedReturnDate = new Date(`${returnDate}T00:00:00`);
 
     const today = new Date();
@@ -433,7 +444,6 @@ app.post("/borrows", verifyToken, async (req, res) => {
       });
     }
 
-    // Prevent the same user from borrowing the same book twice
     const existingBorrow = await borrowsCollection.findOne({
       bookId: bookObjectId,
       userEmail,
@@ -445,8 +455,6 @@ app.post("/borrows", verifyToken, async (req, res) => {
       });
     }
 
-
-    // Decrease available copies only if copies are available
     const updateResult = await booksCollection.updateOne(
       {
         _id: bookObjectId,
@@ -483,7 +491,6 @@ app.post("/borrows", verifyToken, async (req, res) => {
         insertedId: result.insertedId,
       });
     } catch (insertError) {
-      // Restore the book copy if saving the borrow record fails
       await booksCollection.updateOne(
         { _id: bookObjectId },
         { $inc: { availableCopies: 1 } }
@@ -500,14 +507,9 @@ app.post("/borrows", verifyToken, async (req, res) => {
   }
 });
 
-
-
-
-
-// 7. GET MY BORROWS
+// -------------------- 7. GET MY BORROWS --------------------
 // GET /borrows
 // Protected API
-
 
 app.get("/borrows", verifyToken, async (req, res) => {
   try {
@@ -528,15 +530,9 @@ app.get("/borrows", verifyToken, async (req, res) => {
   }
 });
 
-
-
-
-
-
-// 8. RETURN BOOK
+// -------------------- 8. RETURN BOOK --------------------
 // DELETE /borrows/:id
 // Protected API + Ownership check
-
 
 app.delete("/borrows/:id", verifyToken, async (req, res) => {
   try {
@@ -558,11 +554,6 @@ app.delete("/borrows/:id", verifyToken, async (req, res) => {
       });
     }
 
-
-
-
-
-    // A user can return only their own borrowed book
     if (
       borrow.userEmail?.toLowerCase() !== getUserEmail(req)
     ) {
@@ -571,7 +562,6 @@ app.delete("/borrows/:id", verifyToken, async (req, res) => {
       });
     }
 
-    // Delete the borrow record
     const deleteResult = await borrowsCollection.deleteOne({
       _id: new ObjectId(id),
       userEmail: borrow.userEmail,
@@ -583,7 +573,6 @@ app.delete("/borrows/:id", verifyToken, async (req, res) => {
       });
     }
 
-    // Increase available copies after returning
     await booksCollection.updateOne(
       { _id: borrow.bookId },
       { $inc: { availableCopies: 1 } }
@@ -601,36 +590,14 @@ app.delete("/borrows/:id", verifyToken, async (req, res) => {
   }
 });
 
+// -------------------- START SERVER --------------------
 
-
-
-// CONNECT DATABASE AND START SERVER
-
-
-const startServer = async () => {
-  try {
-    await client.connect();
-
-    const db = client.db(process.env.DB_NAME);
-
-    booksCollection = db.collection("books");
-    borrowsCollection = db.collection("borrows");
-
-    console.log("MongoDB Connected Successfully!");
-
-    if (process.env.NODE_ENV !== "production") {
-      app.listen(PORT, () => {
-        console.log(`BookNook Server running on port ${PORT}`);
-      });
-    }
-  } catch (error) {
-    console.error("Server Connection Error:", error);
-    process.exit(1);
-  }
-};
-
-startServer();
+// Local development only.
+// Vercel handles the serverless deployment itself.
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`BookNook Server running on port ${PORT}`);
+  });
+}
 
 export default app;
-
-
